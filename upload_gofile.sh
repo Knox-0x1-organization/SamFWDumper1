@@ -9,9 +9,10 @@
 # Commercial use, removal of this header, or distribution without attribution
 # is strictly prohibited. For permissions: https://github.com/Xiatsuma
 # =============================================================================
-set -e
+set -euo pipefail
 
-FILE="$1"
+FILE="${1:-}"
+rm -f download_url.txt
 if [ ! -f "$FILE" ]; then
   echo "[ERROR] File not found: $FILE"
   exit 1
@@ -19,24 +20,24 @@ fi
 
 echo "Uploading to GoFile..."
 
-TOKEN_RESPONSE=$(curl -s -X POST https://api.gofile.io/accounts)
-TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token' 2>/dev/null)
+TOKEN_RESPONSE=$(curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST https://api.gofile.io/accounts)
+TOKEN=$(echo "$TOKEN_RESPONSE" | jq -er '.data.token // empty' 2>/dev/null || true)
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "[ERROR] Failed to get GoFile token"
   exit 1
 fi
 
-SERVER=$(curl -s "https://api.gofile.io/servers?token=$TOKEN" | jq -r '.data.servers[0].name' 2>/dev/null)
-[ -z "$SERVER" ] && SERVER="store1"
+SERVER_RESPONSE=$(curl --fail --silent --show-error --retry 3 --retry-all-errors "https://api.gofile.io/servers?token=$TOKEN")
+SERVER=$(echo "$SERVER_RESPONSE" | jq -er '.data.servers[0].name // empty' 2>/dev/null || true)
+[ -z "$SERVER" ] && { echo "[ERROR] GoFile did not return an upload server"; exit 1; }
 
-RESPONSE=$(curl -s -X POST \
+RESPONSE=$(curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST \
   -F "file=@$FILE" \
   -F "token=$TOKEN" \
   "https://${SERVER}.gofile.io/uploadFile")
 
-if echo "$RESPONSE" | grep -q '"status":"ok"'; then
-  DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.data.downloadPage')
+if DOWNLOAD_URL=$(echo "$RESPONSE" | jq -er 'select(.status == "ok") | .data.downloadPage | select(type == "string" and length > 0)' 2>/dev/null); then
   echo "[OK] Upload successful!"
   echo "$DOWNLOAD_URL"
   echo "$DOWNLOAD_URL" > download_url.txt

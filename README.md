@@ -1,6 +1,6 @@
 # SamFWDumper
 
-SamFWDumper downloads Samsung firmware packages, extracts selected partition images or system files, and uploads the results to GoFile or a GitHub Release. Processing runs in GitHub Actions, so you do not need to install the extraction tools on your computer.
+SamFWDumper processes Samsung firmware in GitHub Actions, extracts selected partition images or system files, and uploads the results to GoFile or a GitHub Release. The firmware is downloaded by the Actions runner, so the user's device only needs to download the requested output. You do not need to install the extraction tools on your computer.
 
 ## Requirements
 
@@ -9,6 +9,10 @@ SamFWDumper downloads Samsung firmware packages, extracts selected partition ima
 - A direct **HTTPS** firmware download link from [SamFW](https://samfw.com).
 
 The workflows use GitHub-hosted runners and the `GITHUB_TOKEN` to create releases. No personal access token is required. For GitHub Releases, files above the workflow's configured 2 GiB upload threshold are sent to GoFile and linked in the release notes.
+
+The targeted extractor also attaches a text report to its Actions run. It lists each requested path that was found or missing; the run fails after packaging if any requested target is missing, so incomplete output is not published as a successful release.
+
+For the targeted workflow, the runner reads the AP TAR from the SamFW ZIP using HTTP range requests and streams the selected partition image into extraction. It does not store the firmware ZIP on the runner or unpack unrelated firmware components.
 
 ## Run a workflow
 
@@ -58,6 +62,7 @@ Workflows accept HTTPS download links and use normal TLS certificate validation.
 - **The workflow is missing:** Enable GitHub Actions in the fork and check that the workflow files are present on its default branch.
 - **The firmware download fails:** Confirm that the link is a direct HTTPS download link and has not expired.
 - **No selected files are found:** Check the firmware's partition layout and the paths. For targeted extraction, paths are relative to the category root, as in the examples above.
+- **A requested targeted path is missing:** Download the extraction report from the Actions run artifacts and check the listed path against the firmware's system image.
 - **Release upload fails or files are too large:** Choose GoFile as the destination. GitHub Releases have an individual asset size limit.
 - **A tool is missing:** Review the workflow log for the first failing command and include that section in an issue report.
 

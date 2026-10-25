@@ -50,12 +50,18 @@ on:
 
 jobs:
   extract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free unused runner storage
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h "$GITHUB_WORKSPACE"
 
       - name: Install dependencies
         run: |
@@ -69,7 +75,12 @@ jobs:
             android-sdk-libsparse-utils \
             e2fsprogs \
             f2fs-tools \
-            linux-modules-extra-$(uname -r)
+            python3 \
+            "linux-modules-extra-$(uname -r)"
+
+      - name: Record installed package versions
+        run: |
+          dpkg-query -W -f='${binary:Package}=${Version}\n' | grep -E '^(jq|xz-utils|lz4|unzip|curl|binutils|android-sdk-libsparse-utils|e2fsprogs|f2fs-tools|python3|linux-modules-extra|shellcheck)(:|[-=])' | sort
 
       - name: Make tools executable
         run: chmod +x tools/android-tools/* tools/erofs-utils/* upload_gofile.sh scripts/extract_targeted.sh
@@ -89,6 +100,15 @@ jobs:
             "$OUTPUT_NAME" \
             "$CUSTOM_TARGETS"
 
+      - name: Preserve extraction report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: targeted-extraction-report
+          path: output/extraction-report.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Get Firmware Info
         id: fwinfo
         env:
@@ -105,9 +125,11 @@ jobs:
             done
             RELEASE_TAG="${BASE_TAG}_${SUFFIX}"
           fi
-          echo "ap_code=$AP_CODE" >> $GITHUB_OUTPUT
-          echo "csc_code=$CSC_CODE" >> $GITHUB_OUTPUT
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          {
+            echo "ap_code=$AP_CODE"
+            echo "csc_code=$CSC_CODE"
+            echo "release_tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload to GoFile
         if: ${{ inputs.upload_destination == 'gofile' }}
@@ -116,34 +138,8 @@ jobs:
           RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
           AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
           CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
-        run: |
-          if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "[ERROR] No files to upload"
-            exit 1
-          fi
-
-          NOTES_FILE=$(mktemp)
-          LINKS_FILE="links.txt"
-          > "$LINKS_FILE"
-
-          for FILE in output/*; do
-            [ -e "$FILE" ] || continue
-            BASENAME=$(basename "$FILE")
-            if bash upload_gofile.sh "$FILE"; then
-              GOFILE_URL=$(cat download_url.txt)
-              echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
-              echo "${GOFILE_URL}" >> "$LINKS_FILE"
-            else
-              echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
-            fi
-          done
-
-          gh release create "$RELEASE_TAG" \
-            --title "$AP_CODE | $CSC_CODE" \
-            --notes-file "$NOTES_FILE" \
-            "$LINKS_FILE"
-
-          rm -f "$NOTES_FILE"
+          UPLOAD_DESTINATION: gofile
+        run: bash scripts/upload_outputs.sh "$UPLOAD_DESTINATION" "$RELEASE_TAG" "$AP_CODE | $CSC_CODE"
 
       - name: Upload to GitHub Releases
         if: ${{ inputs.upload_destination == 'github releases' }}
@@ -152,41 +148,5 @@ jobs:
           RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
           AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
           CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
-        run: |
-          if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "[ERROR] No files to upload"
-            exit 1
-          fi
-
-          NOTES_FILE=$(mktemp)
-          ASSETS=()
-          SIZE_LIMIT=2147483648
-
-          for FILE in output/*; do
-            [ -e "$FILE" ] || continue
-            if [ -d "$FILE" ]; then
-              FILESIZE=$(du -sb "$FILE" | cut -f1)
-            else
-              FILESIZE=$(stat -c%s "$FILE")
-            fi
-            BASENAME=$(basename "$FILE")
-
-            if [ "$FILESIZE" -gt "$SIZE_LIMIT" ]; then
-              if bash upload_gofile.sh "$FILE"; then
-                GOFILE_URL=$(cat download_url.txt)
-                echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
-              else
-                echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
-              fi
-            else
-              ASSETS+=("$FILE")
-            fi
-          done
-
-          gh release create "$RELEASE_TAG" \
-            --title "$AP_CODE | $CSC_CODE" \
-            --notes-file "$NOTES_FILE" \
-            "${ASSETS[@]}"
-
-          rm -f "$NOTES_FILE"
-          
+          UPLOAD_DESTINATION: github releases
+        run: bash scripts/upload_outputs.sh "$UPLOAD_DESTINATION" "$RELEASE_TAG" "$AP_CODE | $CSC_CODE"

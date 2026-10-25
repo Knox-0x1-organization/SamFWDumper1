@@ -144,7 +144,27 @@ if $NEED_SUPER && [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
   mkdir -p super_dump
   
   if [ -f "tools/android-tools/lpunpack" ]; then
-    tools/android-tools/lpunpack "$SUPER_FILE" super_dump >/dev/null 2>&1 || { echo "      [ERROR] lpunpack failed"; exit 1; }
+    for PART in $SELECTED_PARTITIONS; do
+      case "$PART" in
+        system|system_ext|product|vendor|vendor_dlkm|system_dlkm|odm|odm_dlkm) ;;
+        *) continue ;;
+      esac
+      FOUND_PARTITION=false
+      for SUFFIX in "_a" "" "_b"; do
+        PARTITION="${PART}${SUFFIX}"
+        if tools/android-tools/lpunpack -p "$PARTITION" "$SUPER_FILE" super_dump >/dev/null 2>&1 \
+          && [ -f "super_dump/${PARTITION}.img" ]; then
+          FOUND_PARTITION=true
+          break
+        fi
+      done
+      if ! $FOUND_PARTITION; then
+        echo "      [ERROR] Partition $PART not found in super.img"
+        exit 1
+      fi
+    done
+    find . -maxdepth 1 -type f \( -name 'super.img*' -o -name 'super.raw.img' \) -delete
+    echo "    [OK] Removed the unpacked super image to free runner storage"
   else
     echo "      [ERROR] lpunpack not found"
     exit 1

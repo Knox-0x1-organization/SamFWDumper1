@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -25,9 +25,24 @@ jobs:
           for script in scripts/*.sh upload_gofile.sh; do
             bash -n "$script"
           done
+          bash -n tests/*.sh
+          python3 -m py_compile scripts/stream_ap_archive.py tests/test_stream_ap_archive.py
+
+      - name: Test ranged AP archive streaming
+        run: python3 tests/test_stream_ap_archive.py
+
+      - name: Test selective EROFS extraction
+        run: bash tests/test_erofs_targeted.sh
+
+      - name: Test targeted path validation
+        run: bash tests/test_target_parser.sh
+
+      - name: Test output upload handling
+        run: bash tests/test_upload_outputs.sh
 
       - name: Check shell errors
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck --severity=error scripts/*.sh upload_gofile.sh
+          dpkg-query -W -f='${binary:Package}=${Version}\n' shellcheck
+          shellcheck --severity=error scripts/*.sh upload_gofile.sh tests/*.sh

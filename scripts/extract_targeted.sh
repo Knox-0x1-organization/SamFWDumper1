@@ -103,6 +103,13 @@ apply_custom_targets() {
 
 apply_custom_targets
 
+if [ "${SAMFWDUMPER_VALIDATE_TARGETS_ONLY:-false}" = "true" ]; then
+  printf 'app=%s\npriv-app=%s\netc=%s\ncameradata=%s\nmedia=%s\nlib=%s\nlib64=%s\nframework=%s\n' \
+    "$APP_FOLDERS" "$PRIVAPP_FOLDERS" "$ETC_ITEMS" "$CAMERADATA_ITEMS" \
+    "$MEDIA_FILES" "$LIB_FILES" "$LIB64_FILES" "$FRAMEWORK_JARS"
+  exit 0
+fi
+
 detect_fs_type() {
   local IMG="$1"
   local FS_TYPE=""
@@ -270,38 +277,21 @@ case "$URL" in
   *) echo "[ERROR] Firmware URL must use HTTPS."; exit 1 ;;
 esac
 
-echo ""; echo "[1/6] Downloading..."
-wget -q --content-disposition -- "$URL"
-ZIP_FILE=$(ls -t *.zip 2>/dev/null | head -1)
-[ ! -f "$ZIP_FILE" ] && { echo "[ERROR] Download failed"; exit 1; }
-FILESIZE=$(stat -c%s "$ZIP_FILE")
-[ "$FILESIZE" -eq 0 ] && { echo "[ERROR] Empty file"; exit 1; }
-echo "[OK] Downloaded: $(numfmt --to=iec $FILESIZE)"
-
-CSC_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z]{3}$' | grep -v -E '^(COM|SAM|FAC)$' | head -1)
-AP_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z][A-Z0-9]{11,}$' | head -1)
-echo "$CSC_CODE" > csc_code.txt
-echo "$AP_CODE" > ap_code.txt
-echo "Firmware: $AP_CODE | CSC: $CSC_CODE"
-
-echo ""; echo "[2/6] Extracting ZIP..."
-unzip -o "$ZIP_FILE" >/dev/null 2>&1
-rm -f "$ZIP_FILE"
-echo "[OK] Done"
-
-echo ""; echo "[3/6] Extracting AP..."
-AP_FILE=$(find . -name "AP_*.tar.md5" -o -name "AP_*.tar" | head -n 1)
-[ -z "$AP_FILE" ] && { echo "[ERROR] AP file not found"; exit 1; }
-echo "  Extracting: $(basename "$AP_FILE")"
-tar -xf "$AP_FILE" >/dev/null 2>&1
-echo "  Contents:"
-for file in *.img *.img.lz4 *.bin *.bin.lz4 *.elf; do
-  [ -f "$file" ] && echo "    $file"
+echo ""; echo "[1/4] Reading the AP image archive from firmware..."
+if ! (set -o pipefail; python3 scripts/stream_ap_archive.py "$URL" \
+  | tar --no-same-owner --no-same-permissions --no-anchored --wildcards -xf - 'super.img*' 'system.img*'); then
+  echo "[ERROR] Failed to stream and extract the AP TAR."
+  exit 1
+fi
+echo "[OK] Streamed the AP archive without storing the full firmware ZIP or AP TAR."
+for file in super.img* system.img*; do
+  [ -f "$file" ] && echo "  Found: $file"
 done
-rm -f "$AP_FILE"
-echo "[OK] Done"
 
-echo ""; echo "[4/6] Processing super.img..."
+AP_CODE=$(cat ap_code.txt)
+CSC_CODE=$(cat csc_code.txt)
+echo "Firmware: $AP_CODE | CSC: $CSC_CODE"
+echo ""; echo "[2/4] Processing super.img..."
 mkdir -p super_dump "output/$OUTPUT_NAME/system"
 
 SUPER_FILE=$(find . -maxdepth 1 -name "super.img*" -o -name "super.img" | head -n 1)
@@ -329,28 +319,29 @@ if [ -n "$SUPER_FILE" ]; then
   fi
 
   echo "  Unpacking partitions..."
-  tools/android-tools/lpunpack "$SUPER_FILE" super_dump >/dev/null 2>&1 || { echo "  [ERROR] lpunpack failed"; exit 1; }
+  SYSTEM_IMG=""
+  SYSTEM_FS=""
+  for PARTITION in system system_a system_b; do
+    if tools/android-tools/lpunpack -p "$PARTITION" "$SUPER_FILE" super_dump >/dev/null 2>&1 \
+      && [ -f "super_dump/$PARTITION.img" ]; then
+      SYSTEM_IMG="super_dump/$PARTITION.img"
+      SYSTEM_FS=$(detect_fs_type "$SYSTEM_IMG")
+      break
+    fi
+  done
+  if [ -z "$SYSTEM_IMG" ]; then
+    echo "  [ERROR] No system partition found in super.img"
+    exit 1
+  fi
+  find . -maxdepth 1 -type f \( -name 'super.img*' -o -name 'super.raw.img' \) -delete
+  echo "  [OK] Removed the unpacked super image to free runner storage"
 
   echo ""
   echo "  Partitions detected:"
   printf "  %-15s | %-6s | %s\n" "Partition" "Format" "Size"
-
-  SYSTEM_IMG=""
-
-  for img in super_dump/*.img; do
-    [ -f "$img" ] || continue
-    PART_NAME=$(basename "$img" .img)
-    PART_FS=$(detect_fs_type "$img")
-    PART_SIZE=$(numfmt --to=iec $(stat -c%s "$img") 2>/dev/null || echo "?")
-
-    printf "  %-15s | %-6s | %s\n" "$PART_NAME" "$PART_FS" "$PART_SIZE"
-
-    case "$PART_NAME" in
-      system|system_a|system_b) SYSTEM_IMG="$img"; SYSTEM_FS="$PART_FS" ;;
-    esac
-  done
-
-  [ -n "$SYSTEM_IMG" ] && echo "  System: $(basename "$SYSTEM_IMG") ($SYSTEM_FS)"
+  PART_SIZE=$(numfmt --to=iec "$(stat -c%s "$SYSTEM_IMG")" 2>/dev/null || echo "?")
+  printf "  %-15s | %-6s | %s\n" "$(basename "$SYSTEM_IMG" .img)" "$SYSTEM_FS" "$PART_SIZE"
+  echo "  System: $(basename "$SYSTEM_IMG") ($SYSTEM_FS)"
 
 else
   echo "  No super.img found - legacy device"
@@ -386,12 +377,37 @@ if [ "$SYSTEM_FS" = "f2fs" ]; then
   echo "  Mounting f2fs..."
   extract_f2fs_mount "$SYSTEM_IMG" "system_extracted" || true
 elif [ "$SYSTEM_FS" = "erofs" ]; then
-  echo "  Extracting erofs..."
-  tools/erofs-utils/extract.erofs -i "$SYSTEM_IMG" -x -o system_extracted/ >/dev/null 2>&1 || {
-    echo "  [ERROR] erofs extraction failed"
-    exit 1
+  echo "  Extracting requested paths from erofs..."
+  EROFS_TARGETS_FILE="system_extracted_targets.txt"
+  : > "$EROFS_TARGETS_FILE"
+  add_ero_target() {
+    printf '/%s\n' "$1" >> "$EROFS_TARGETS_FILE"
+    printf '/system/%s\n' "$1" >> "$EROFS_TARGETS_FILE"
   }
-  echo "  [OK] Extracted"
+  add_ero_category() {
+    local category="$1" targets="$2" target
+    for target in $targets; do
+      add_ero_target "$category/$target"
+    done
+  }
+  add_ero_category app "$APP_FOLDERS"
+  add_ero_category priv-app "$PRIVAPP_FOLDERS"
+  add_ero_category etc "$ETC_ITEMS"
+  add_ero_category cameradata "$CAMERADATA_ITEMS"
+  add_ero_category media "$MEDIA_FILES"
+  add_ero_category lib "$LIB_FILES"
+  add_ero_category lib64 "$LIB64_FILES"
+  add_ero_category framework "$FRAMEWORK_JARS"
+  if [ "$SHOW_ALL" = "true" ]; then
+    printf '/app\n/system/app\n/priv-app\n/system/priv-app\n' >> "$EROFS_TARGETS_FILE"
+  fi
+  sort -u -o "$EROFS_TARGETS_FILE" "$EROFS_TARGETS_FILE"
+  mkdir -p system_extracted
+  if tools/erofs-utils/extract.erofs -i "$SYSTEM_IMG" -X / -c "$EROFS_TARGETS_FILE" -r -s -o system_extracted >/dev/null 2>&1; then
+    echo "  [OK] Extracted requested paths"
+  else
+    echo "  [WARN] One or more requested paths could not be extracted; checking the target list"
+  fi
 else
   echo "  Extracting ext4 via debugfs..."
 
@@ -518,6 +534,18 @@ is_target() {
 
 SYS_OUT="output/$OUTPUT_NAME/system"
 HAS_ANY=false
+MISSING_COUNT=0
+EXTRACTED_COUNT=0
+REPORT_FILE="$SYS_OUT/EXTRACTION_REPORT.txt"
+mkdir -p "$SYS_OUT"
+: > "$REPORT_FILE"
+
+record_missing() {
+  local label="$1"
+  echo "    [ERROR] $label not found"
+  printf 'MISSING %s\n' "$label" >> "$REPORT_FILE"
+  MISSING_COUNT=$((MISSING_COUNT + 1))
+}
 
 copy_item() {
   local SRC="$1" DST_DIR="$2" DST_NAME="$3" LABEL="$4"
@@ -525,6 +553,8 @@ copy_item() {
     mkdir -p "$DST_DIR/$(dirname "$DST_NAME")"
     cp -r "$SRC" "$DST_DIR/$DST_NAME"
     echo "    [OK] $LABEL"
+    printf 'EXTRACTED %s\n' "$LABEL" >> "$REPORT_FILE"
+    EXTRACTED_COUNT=$((EXTRACTED_COUNT + 1))
     return 0
   fi
   return 1
@@ -551,6 +581,8 @@ if [ -n "$APP_FOLDERS" ]; then
             printf "    %-40s %8s [selected]\n" "$RELATIVE" "$SIZE"
             mkdir -p "$SYS_OUT/app/$(dirname "$RELATIVE")"
             cp -r "$ITEM" "$SYS_OUT/app/$RELATIVE"
+            printf 'EXTRACTED app/%s\n' "$RELATIVE" >> "$REPORT_FILE"
+            EXTRACTED_COUNT=$((EXTRACTED_COUNT + 1))
             HAS_ANY=true
           else
             printf "      %-40s %8s\n" "$NAME" "$SIZE"
@@ -574,7 +606,7 @@ if [ -n "$APP_FOLDERS" ]; then
           copy_item "$BASE" "$SYS_OUT/app" "$FOLDER" "app/$FOLDER" && HAS_ANY=true && FOUND=true && break
         fi
       done
-      $FOUND || echo "    [ERROR] app/$FOLDER not found"
+      $FOUND || record_missing "app/$FOLDER"
     done
   fi
 fi
@@ -600,6 +632,8 @@ if [ -n "$PRIVAPP_FOLDERS" ]; then
             printf "    %-40s %8s [selected]\n" "$RELATIVE" "$SIZE"
             mkdir -p "$SYS_OUT/priv-app/$(dirname "$RELATIVE")"
             cp -r "$ITEM" "$SYS_OUT/priv-app/$RELATIVE"
+            printf 'EXTRACTED priv-app/%s\n' "$RELATIVE" >> "$REPORT_FILE"
+            EXTRACTED_COUNT=$((EXTRACTED_COUNT + 1))
             HAS_ANY=true
           else
             printf "      %-40s %8s\n" "$NAME" "$SIZE"
@@ -638,7 +672,7 @@ if [ -n "$PRIVAPP_FOLDERS" ]; then
           done
         done
       fi
-      $FOUND || echo "    [ERROR] priv-app/$FOLDER not found"
+      $FOUND || record_missing "priv-app/$FOLDER"
     done
   fi
 fi
@@ -656,7 +690,7 @@ if [ -n "$ETC_ITEMS" ]; then
         copy_item "$BASE" "$SYS_OUT/etc" "$ITEM" "etc/$ITEM" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] etc/$ITEM not found"
+    $FOUND || record_missing "etc/$ITEM"
   done
 fi
 
@@ -673,7 +707,7 @@ if [ -n "$CAMERADATA_ITEMS" ]; then
         copy_item "$BASE" "$SYS_OUT/cameradata" "$ITEM" "cameradata/$ITEM" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] cameradata/$ITEM not found"
+    $FOUND || record_missing "cameradata/$ITEM"
   done
 fi
 
@@ -690,7 +724,7 @@ if [ -n "$MEDIA_FILES" ]; then
         copy_item "$BASE" "$SYS_OUT/media" "$FILE" "media/$FILE" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] media/$FILE not found"
+    $FOUND || record_missing "media/$FILE"
   done
 fi
 
@@ -707,7 +741,7 @@ if [ -n "$LIB_FILES" ]; then
         copy_item "$BASE" "$SYS_OUT/lib" "$FILE" "lib/$FILE" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] lib/$FILE not found"
+    $FOUND || record_missing "lib/$FILE"
   done
 fi
 
@@ -724,7 +758,7 @@ if [ -n "$LIB64_FILES" ]; then
         copy_item "$BASE" "$SYS_OUT/lib64" "$FILE" "lib64/$FILE" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] lib64/$FILE not found"
+    $FOUND || record_missing "lib64/$FILE"
   done
 fi
 
@@ -741,11 +775,32 @@ if [ -n "$FRAMEWORK_JARS" ]; then
         copy_item "$BASE" "$SYS_OUT/framework" "$JAR" "framework/$JAR" && HAS_ANY=true && FOUND=true && break
       fi
     done
-    $FOUND || echo "    [ERROR] framework/$JAR not found"
+    $FOUND || record_missing "framework/$JAR"
   done
 fi
 
-rm -rf system_extracted super_dump *.img
+if [ "$SHOW_ALL" = "true" ]; then
+  for category in app priv-app etc cameradata media lib lib64 framework; do
+    case "$category" in
+      app) targets="$APP_FOLDERS" ;;
+      priv-app) targets="$PRIVAPP_FOLDERS" ;;
+      etc) targets="$ETC_ITEMS" ;;
+      cameradata) targets="$CAMERADATA_ITEMS" ;;
+      media) targets="$MEDIA_FILES" ;;
+      lib) targets="$LIB_FILES" ;;
+      lib64) targets="$LIB64_FILES" ;;
+      framework) targets="$FRAMEWORK_JARS" ;;
+    esac
+    for target in $targets; do
+      if [ ! -e "$SYS_OUT/$category/$target" ]; then
+        record_missing "$category/$target"
+      fi
+    done
+  done
+fi
+
+cp "$REPORT_FILE" output/extraction-report.txt
+rm -rf system_extracted super_dump *.img system_extracted_targets.txt
 
 if ! $HAS_ANY; then
   echo ""
@@ -773,4 +828,10 @@ echo "[OK] Extracted $FILE_COUNT items"
 echo "Total size: $TOTAL_SIZE"
 ls -lh
 echo "---------------------------------------"
+echo "Requested targets extracted: $EXTRACTED_COUNT"
+echo "Requested targets missing: $MISSING_COUNT"
+if [ "$MISSING_COUNT" -gt 0 ]; then
+  echo "[ERROR] Some requested targets were not found. See $OUTPUT_NAME/system/EXTRACTION_REPORT.txt."
+  exit 1
+fi
 echo "[OK] Done!"

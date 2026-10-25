@@ -20,15 +20,25 @@ on:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free unused runner storage
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h "$GITHUB_WORKSPACE"
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Record installed package versions
+        run: |
+          dpkg-query -W -f='${binary:Package}=${Version}\n' | grep -E '^(jq|xz-utils|lz4|unzip|curl|binutils|android-sdk-libsparse-utils|e2fsprogs|f2fs-tools|linux-modules-extra|shellcheck)(:|[-=])' | sort
 
       - name: Download and Upload
         env:
@@ -51,9 +61,11 @@ jobs:
             done
             RELEASE_TAG="${BASE_TAG}_${SUFFIX}"
           fi
-          echo "ap_code=$AP_CODE" >> $GITHUB_OUTPUT
-          echo "csc_code=$CSC_CODE" >> $GITHUB_OUTPUT
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          {
+            echo "ap_code=$AP_CODE"
+            echo "csc_code=$CSC_CODE"
+            echo "release_tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release with GoFile Link
         env:
@@ -62,7 +74,15 @@ jobs:
           AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
           CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
-          GOFILE_URL=$(cat download_url.txt 2>/dev/null || echo "Upload failed")
+          if [ ! -s download_url.txt ]; then
+            echo "[ERROR] GoFile did not create a download URL."
+            exit 1
+          fi
+          GOFILE_URL=$(<download_url.txt)
+          case "$GOFILE_URL" in
+            https://*) ;;
+            *) echo "[ERROR] GoFile returned an invalid download URL."; exit 1 ;;
+          esac
           NOTES_FILE=$(mktemp)
           echo "${GOFILE_URL}" > "$NOTES_FILE"
           gh release create "$RELEASE_TAG" \

@@ -233,29 +233,47 @@ if [ -n "$SUPER_FILE" ]; then
 
   echo "  Unpacking partitions..."
   mkdir -p super_dump
-  tools/android-tools/lpunpack "$SUPER_FILE" super_dump >/dev/null 2>&1 || { echo "  [ERROR] lpunpack failed"; exit 1; }
-
-  echo ""
-  echo "  Partitions detected:"
-  printf "  %-15s | %-6s | %s\n" "Partition" "Format" "Size"
-
   SYSTEM_IMG=""
   SYSTEM_FS=""
   PRODUCT_IMG=""
   PRODUCT_FS=""
 
-  for img in super_dump/*.img; do
+  for PARTITION in system system_a system_b; do
+    if tools/android-tools/lpunpack -p "$PARTITION" "$SUPER_FILE" super_dump >/dev/null 2>&1 \
+      && [ -f "super_dump/$PARTITION.img" ]; then
+      SYSTEM_IMG="super_dump/$PARTITION.img"
+      SYSTEM_FS=$(detect_fs_type "$SYSTEM_IMG")
+      break
+    fi
+  done
+  if [ -z "$SYSTEM_IMG" ]; then
+    echo "  [ERROR] No system partition found in super.img"
+    exit 1
+  fi
+
+  if [ "$WANT_FRAMEWORK_RRO" = "true" ]; then
+    for PARTITION in product product_a product_b; do
+      if tools/android-tools/lpunpack -p "$PARTITION" "$SUPER_FILE" super_dump >/dev/null 2>&1 \
+        && [ -f "super_dump/$PARTITION.img" ]; then
+        PRODUCT_IMG="super_dump/$PARTITION.img"
+        PRODUCT_FS=$(detect_fs_type "$PRODUCT_IMG")
+        break
+      fi
+    done
+  fi
+
+  find . -maxdepth 1 -type f \( -name 'super.img*' -o -name 'super.raw.img' \) -delete
+  echo "  [OK] Removed the unpacked super image to free runner storage"
+
+  echo ""
+  echo "  Partitions detected:"
+  printf "  %-15s | %-6s | %s\n" "Partition" "Format" "Size"
+  for img in "$SYSTEM_IMG" "$PRODUCT_IMG"; do
     [ -f "$img" ] || continue
     PART_NAME=$(basename "$img" .img)
     PART_FS=$(detect_fs_type "$img")
-    PART_SIZE=$(numfmt --to=iec $(stat -c%s "$img") 2>/dev/null || echo "?")
-
+    PART_SIZE=$(numfmt --to=iec "$(stat -c%s "$img")" 2>/dev/null || echo "?")
     printf "  %-15s | %-6s | %s\n" "$PART_NAME" "$PART_FS" "$PART_SIZE"
-
-    case "$PART_NAME" in
-      system|system_a|system_b) SYSTEM_IMG="$img"; SYSTEM_FS="$PART_FS" ;;
-      product|product_a|product_b) PRODUCT_IMG="$img"; PRODUCT_FS="$PART_FS" ;;
-    esac
   done
 
   [ -n "$SYSTEM_IMG" ] && echo "  System:  $(basename "$SYSTEM_IMG") ($SYSTEM_FS)"
