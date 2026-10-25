@@ -11,9 +11,9 @@
 # =============================================================================
 set -e
 
-echo "═══════════════════════════════════════"
+echo "---------------------------------------"
 echo "   Samsung System Files Extractor"
-echo "═══════════════════════════════════════"
+echo "---------------------------------------"
 
 URL="$1"
 COMPRESSION_LEVEL="${2:-0}"
@@ -55,7 +55,7 @@ TARGETS=""
 TARGETS="${TARGETS# }"
 
 if [ -z "$TARGETS" ] && [ "$WANT_FRAMEWORK_RRO" != "true" ] && [ "$WANT_PIT" != "true" ] && [ "$WANT_WALLPAPER_RES" != "true" ]; then
-  echo "❌ No targets selected!"
+  echo "[ERROR] No targets selected!"
   exit 1
 fi
 
@@ -93,11 +93,11 @@ extract_f2fs() {
   local MNT="/tmp/f2fs_mount_$$"
   mkdir -p "$MNT"
   if ! sudo mount -t f2fs -o ro,loop "$IMG" "$MNT" 2>/dev/null; then
-    echo "  ❌ f2fs mount failed"
+    echo "  [ERROR] f2fs mount failed"
     rm -rf "$MNT"
     return 1
   fi
-  echo "  ✅ Mounted f2fs successfully"
+  echo "  [OK] Mounted f2fs successfully"
   for TARGET in $TARGETS; do
     IS_FILE=false
     for SF in $SINGLE_FILES; do
@@ -119,9 +119,9 @@ extract_f2fs() {
         mkdir -p "$OUT_DIR/$(dirname "$TARGET")"
         sudo cp "$BEST_SRC" "$OUT_DIR/$TARGET"
         sudo chown $(id -u):$(id -g) "$OUT_DIR/$TARGET"
-        echo "    ✓ $TARGET ($(numfmt --to=iec $BEST_SIZE))"
+        echo "    [OK] $TARGET ($(numfmt --to=iec $BEST_SIZE))"
       else
-        echo "  ⚠️ $TARGET not found"
+        echo "  [WARN] $TARGET not found"
       fi
     else
       BEST_SRC=""
@@ -140,9 +140,9 @@ extract_f2fs() {
       if [ -n "$BEST_SRC" ]; then
         sudo cp -r "$BEST_SRC" "$DEST/" 2>/dev/null
         sudo chown -R $(id -u):$(id -g) "$DEST/$(basename "$TARGET")"
-        echo "    ✓ $TARGET ($(numfmt --to=iec $BEST_SIZE))"
+        echo "    [OK] $TARGET ($(numfmt --to=iec $BEST_SIZE))"
       else
-        echo "  ⚠️ $TARGET not found"
+        echo "  [WARN] $TARGET not found"
       fi
     fi
   done
@@ -151,13 +151,18 @@ extract_f2fs() {
   return 0
 }
 
+case "$URL" in
+  https://*) ;;
+  *) echo "[ERROR] Firmware URL must use HTTPS."; exit 1 ;;
+esac
+
 echo ""; echo "[1/8] Downloading..."
-wget -q --no-check-certificate --content-disposition "$URL"
+wget -q --content-disposition -- "$URL"
 ZIP_FILE=$(ls -t *.zip 2>/dev/null | head -1)
-[ ! -f "$ZIP_FILE" ] && { echo "❌ Download failed"; exit 1; }
+[ ! -f "$ZIP_FILE" ] && { echo "[ERROR] Download failed"; exit 1; }
 FILESIZE=$(stat -c%s "$ZIP_FILE")
-[ "$FILESIZE" -eq 0 ] && { echo "❌ Empty file"; exit 1; }
-echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
+[ "$FILESIZE" -eq 0 ] && { echo "[ERROR] Empty file"; exit 1; }
+echo "[OK] Downloaded: $(numfmt --to=iec $FILESIZE)"
 
 CSC_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z]{3}$' | grep -v -E '^(COM|SAM|FAC)$' | head -1)
 AP_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z][A-Z0-9]{11,}$' | head -1)
@@ -168,7 +173,7 @@ echo "Firmware: $AP_CODE | CSC: $CSC_CODE"
 echo ""; echo "[2/8] Extracting ZIP..."
 unzip -o "$ZIP_FILE" >/dev/null 2>&1
 rm -f "$ZIP_FILE"
-echo "✅ Done"
+echo "[OK] Done"
 
 mkdir -p output
 
@@ -176,14 +181,14 @@ if [ "$WANT_PIT" = "true" ]; then
   echo ""; echo "[3/8] Extracting PIT from CSC..."
   CSC_FILE=$(find . -maxdepth 1 -name "CSC_*.tar.md5" -o -name "CSC_*.tar" | head -n 1)
   if [ -z "$CSC_FILE" ]; then
-    echo "  ⚠️ CSC tar not found"
+    echo "  [WARN] CSC tar not found"
   else
     PIT_FILE=$(tar -tf "$CSC_FILE" 2>/dev/null | grep -i "\.pit$" | head -n 1)
     if [ -z "$PIT_FILE" ]; then
-      echo "  ⚠️ No .pit file inside CSC"
+      echo "  [WARN] No .pit file inside CSC"
     else
       tar -xf "$CSC_FILE" "$PIT_FILE" 2>/dev/null
-      cp "$PIT_FILE" "output/$(basename "$PIT_FILE")" 2>/dev/null && echo "    ✓ $(basename "$PIT_FILE")" || echo "  ⚠️ Extraction failed"
+      cp "$PIT_FILE" "output/$(basename "$PIT_FILE")" 2>/dev/null && echo "    [OK] $(basename "$PIT_FILE")" || echo "  [WARN] Extraction failed"
     fi
   fi
 else
@@ -192,7 +197,7 @@ fi
 
 echo ""; echo "[4/8] Extracting AP..."
 AP_FILE=$(find . -name "AP_*.tar.md5" -o -name "AP_*.tar" | head -n 1)
-[ -z "$AP_FILE" ] && { echo "❌ AP file not found"; exit 1; }
+[ -z "$AP_FILE" ] && { echo "[ERROR] AP file not found"; exit 1; }
 echo "  Extracting: $(basename "$AP_FILE")"
 tar -xf "$AP_FILE" >/dev/null 2>&1
 echo "  Contents:"
@@ -200,7 +205,7 @@ for file in *.img *.img.lz4; do
   [ -f "$file" ] && echo "    $file"
 done
 rm -f "$AP_FILE"
-echo "✅ Done"
+echo "[OK] Done"
 
 echo ""; echo "[5/8] Processing super.img..."
 SUPER_FILE=$(find . -maxdepth 1 -name "super.img*" -o -name "super.img" | head -n 1)
@@ -212,7 +217,7 @@ if [ -n "$SUPER_FILE" ]; then
     echo "  Decompressing LZ4..."
     lz4 -d "$SUPER_FILE" "super.img" 2>/dev/null
     SUPER_FILE="super.img"
-    echo "  ✅ Decompressed"
+    echo "  [OK] Decompressed"
   fi
 
   SUPER_FS=$(detect_fs_type "$SUPER_FILE")
@@ -223,16 +228,16 @@ if [ -n "$SUPER_FILE" ]; then
     simg2img "$SUPER_FILE" "super.raw.img" 2>/dev/null || tools/android-tools/simg2img "$SUPER_FILE" "super.raw.img"
     SUPER_FILE="super.raw.img"
     SUPER_FS=$(detect_fs_type "$SUPER_FILE")
-    echo "  ✅ Converted - new format: $SUPER_FS"
+    echo "  [OK] Converted - new format: $SUPER_FS"
   fi
 
   echo "  Unpacking partitions..."
   mkdir -p super_dump
-  tools/android-tools/lpunpack "$SUPER_FILE" super_dump >/dev/null 2>&1 || { echo "  ❌ lpunpack failed"; exit 1; }
+  tools/android-tools/lpunpack "$SUPER_FILE" super_dump >/dev/null 2>&1 || { echo "  [ERROR] lpunpack failed"; exit 1; }
 
   echo ""
   echo "  Partitions detected:"
-  echo "  ┌─────────────────────────────────────────────┐"
+  printf "  %-15s | %-6s | %s\n" "Partition" "Format" "Size"
 
   SYSTEM_IMG=""
   SYSTEM_FS=""
@@ -245,15 +250,13 @@ if [ -n "$SUPER_FILE" ]; then
     PART_FS=$(detect_fs_type "$img")
     PART_SIZE=$(numfmt --to=iec $(stat -c%s "$img") 2>/dev/null || echo "?")
 
-    printf "  │ %-15s → %-6s (%s)\n" "$PART_NAME" "$PART_FS" "$PART_SIZE"
+    printf "  %-15s | %-6s | %s\n" "$PART_NAME" "$PART_FS" "$PART_SIZE"
 
     case "$PART_NAME" in
       system|system_a|system_b) SYSTEM_IMG="$img"; SYSTEM_FS="$PART_FS" ;;
       product|product_a|product_b) PRODUCT_IMG="$img"; PRODUCT_FS="$PART_FS" ;;
     esac
   done
-
-  echo "  └─────────────────────────────────────────────┘"
 
   [ -n "$SYSTEM_IMG" ] && echo "  System:  $(basename "$SYSTEM_IMG") ($SYSTEM_FS)"
   [ -n "$PRODUCT_IMG" ] && echo "  Product: $(basename "$PRODUCT_IMG") ($PRODUCT_FS)"
@@ -291,12 +294,12 @@ else
     echo "  Product: $(basename "$PRODUCT_IMG") ($PRODUCT_FS)"
   fi
 fi
-echo "✅ Done"
+echo "[OK] Done"
 
 if [ "$WANT_FRAMEWORK_RRO" = "true" ]; then
   echo ""; echo "[6/8] Extracting framework RRO APK..."
   if [ -z "$PRODUCT_IMG" ] || [ ! -f "$PRODUCT_IMG" ]; then
-    echo "  ⚠️ product.img not found"
+    echo "  [WARN] product.img not found"
   else
     mkdir -p product_extracted
     RRO_FOUND=false
@@ -309,18 +312,18 @@ if [ "$WANT_FRAMEWORK_RRO" = "true" ]; then
       PROD_MNT="/tmp/product_f2fs_$$"
       mkdir -p "$PROD_MNT"
       if sudo mount -t f2fs -o ro,loop "$PRODUCT_IMG" "$PROD_MNT" 2>/dev/null; then
-        echo "  ✅ Mounted"
+        echo "  [OK] Mounted"
         APK_SRC=$(sudo find "$PROD_MNT" \( -name "framework-res__*__auto_generated_rro_product.apk" -o -name "framework-res__auto_generated_rro_product.apk" \) 2>/dev/null | head -n 1)
         if [ -n "$APK_SRC" ]; then
           sudo cp "$APK_SRC" "output/$(basename "$APK_SRC")"
           sudo chown $(id -u):$(id -g) "output/$(basename "$APK_SRC")"
-          echo "    ✓ $(basename "$APK_SRC")"
+          echo "    [OK] $(basename "$APK_SRC")"
           RRO_FOUND=true
         fi
         sudo umount "$PROD_MNT"
         rm -rf "$PROD_MNT"
       else
-        echo "  ❌ f2fs mount failed"
+        echo "  [ERROR] f2fs mount failed"
       fi
     elif [ "$PRODUCT_FS" = "erofs" ]; then
       echo "  Extracting erofs product..."
@@ -349,13 +352,13 @@ if [ "$WANT_FRAMEWORK_RRO" = "true" ]; then
         APK_SRC=$(find "$BASE" -maxdepth 3 \( -name "framework-res__*__auto_generated_rro_product.apk" -o -name "framework-res__auto_generated_rro_product.apk" \) 2>/dev/null | head -n 1)
         if [ -n "$APK_SRC" ]; then
           cp "$APK_SRC" "output/$(basename "$APK_SRC")"
-          echo "    ✓ $(basename "$APK_SRC")"
+          echo "    [OK] $(basename "$APK_SRC")"
           RRO_FOUND=true
           break
         fi
       done
     fi
-    $RRO_FOUND || echo "  ⚠️ framework-res RRO APK not found"
+    $RRO_FOUND || echo "  [WARN] framework-res RRO APK not found"
     rm -rf product_extracted
   fi
 else
@@ -365,7 +368,10 @@ fi
 if [ -z "$TARGETS" ] && [ "$WANT_WALLPAPER_RES" != "true" ]; then
   echo ""; echo "[7/8] No system targets - skipping"
 else
-  [ -z "$SYSTEM_IMG" ] || [ ! -f "$SYSTEM_IMG" ] && { echo "❌ system.img not found"; exit 1; }
+  if [ -z "$SYSTEM_IMG" ] || [ ! -f "$SYSTEM_IMG" ]; then
+    echo "[ERROR] system.img not found"
+    exit 1
+  fi
   echo ""; echo "[7/8] Extracting system.img contents..."
   mkdir -p system_extracted
 
@@ -381,10 +387,10 @@ else
   elif [ "$SYSTEM_FS" = "erofs" ]; then
     echo "  Extracting erofs..."
     tools/erofs-utils/extract.erofs -i "$SYSTEM_IMG" -x -o system_extracted/ >/dev/null 2>&1 || {
-      echo "  ❌ erofs extraction failed"
+      echo "  [ERROR] erofs extraction failed"
       exit 1
     }
-    echo "  ✅ Extracted"
+    echo "  [OK] Extracted"
   else
     echo "  Extracting ext4 via debugfs..."
     DEBUGFS_TARGETS="$TARGETS"
@@ -404,7 +410,7 @@ else
             break
           fi
         done
-        $FOUND || echo "  ⚠️ $TARGET not found"
+        $FOUND || echo "  [WARN] $TARGET not found"
       else
         FOUND=false
         DEST_PARENT="system_extracted/$(dirname "$TARGET")"
@@ -416,7 +422,7 @@ else
             break
           fi
         done
-        $FOUND || echo "  ⚠️ $TARGET not found"
+        $FOUND || echo "  [WARN] $TARGET not found"
       fi
     done
   fi
@@ -436,18 +442,18 @@ else
       APK_SRC="$BASE/wallpaper-res.apk"
       if [ -f "$APK_SRC" ]; then
         cp "$APK_SRC" "output/wallpaper-res.apk"
-        echo "    ✓ wallpaper-res.apk"
+        echo "    [OK] wallpaper-res.apk"
         APK_FOUND=true
         break
       fi
     done
-    $APK_FOUND || echo "  ⚠️ wallpaper-res.apk not found"
+    $APK_FOUND || echo "  [WARN] wallpaper-res.apk not found"
   fi
 
   for TARGET in $TARGETS; do
     if [ -e "system_extracted/$TARGET" ]; then
       cp -r "system_extracted/$TARGET" "output/"
-      echo "    ✓ $TARGET"
+      echo "    [OK] $TARGET"
       continue
     fi
     for BASE in \
@@ -461,11 +467,11 @@ else
       SRC="$BASE/$TARGET"
       if [ -e "$SRC" ]; then
         cp -r "$SRC" "output/"
-        echo "    ✓ $TARGET"
+        echo "    [OK] $TARGET"
         break
       fi
     done
-    [ ! -e "output/$TARGET" ] && echo "  ⚠️ Not found: $TARGET"
+    [ ! -e "output/$TARGET" ] && echo "  [WARN] Not found: $TARGET"
   done
 
   rm -rf system_extracted
@@ -480,23 +486,23 @@ for ITEM in output/*; do
   if [ -d "$ITEM" ]; then
     if [ "$COMPRESSION_LEVEL" != "0" ]; then
       tar -cf - -C output "$NAME" | xz $XZ_FLAGS -T0 2>/dev/null > "output/${NAME}.tar.xz" && rm -rf "$ITEM"
-      echo "    ✓ ${NAME}.tar.xz"
+      echo "    [OK] ${NAME}.tar.xz"
     else
       tar -cf "output/${NAME}.tar" -C output "$NAME" && rm -rf "$ITEM"
-      echo "    ✓ ${NAME}.tar"
+      echo "    [OK] ${NAME}.tar"
     fi
   elif [ -f "$ITEM" ] && [ "$COMPRESSION_LEVEL" != "0" ] && [[ "$ITEM" != *.xz ]]; then
-    xz $XZ_FLAGS -T0 "$ITEM" 2>/dev/null && echo "    ✓ ${NAME}.xz" || true
+    xz $XZ_FLAGS -T0 "$ITEM" 2>/dev/null && echo "    [OK] ${NAME}.xz" || true
   fi
 done
 
-echo ""; echo "═══════════════════════════════════════"
+echo ""; echo "---------------------------------------"
 FILE_COUNT=$(ls -1 output 2>/dev/null | wc -l)
-[ "$FILE_COUNT" -eq 0 ] && { echo "❌ Nothing extracted!"; exit 1; }
+[ "$FILE_COUNT" -eq 0 ] && { echo "[ERROR] Nothing extracted!"; exit 1; }
 TOTAL_SIZE=$(du -sh output | cut -f1)
-echo "✅ Extracted $FILE_COUNT items"
+echo "[OK] Extracted $FILE_COUNT items"
 echo "Total size: $TOTAL_SIZE"
 echo ""; echo "Files:"
 ls -lh output
-echo "═══════════════════════════════════════"
-echo "✅ Done!"
+echo "---------------------------------------"
+echo "[OK] Done!"

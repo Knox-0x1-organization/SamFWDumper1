@@ -1,174 +1,91 @@
-![Banner](banner.png)
-
 # SamFWDumper
 
-A free tool that downloads Samsung firmware and pulls out the parts you need. No software to install, it all runs in your browser through GitHub Actions.
+SamFWDumper downloads Samsung firmware packages, extracts selected partition images or system files, and uploads the results to GoFile or a GitHub Release. Processing runs in GitHub Actions, so you do not need to install the extraction tools on your computer.
 
-## What This Actually Means
+## Requirements
 
-You know those big firmware files from SamFW? This tool:
-- Downloads that file for you
-- Opens it up
-- Grabs only what you asked for
-- Gives you a download link
+- A GitHub account and a fork of this repository.
+- GitHub Actions enabled for your fork.
+- A direct **HTTPS** firmware download link from [SamFW](https://samfw.com).
 
-You don't need a powerful computer. You don't need to install anything. GitHub's servers do all the work.
+The workflows use GitHub-hosted runners and the `GITHUB_TOKEN` to create releases. No personal access token is required. For GitHub Releases, files above the workflow's configured 2 GiB upload threshold are sent to GoFile and linked in the release notes.
 
----
+## Run a workflow
 
-## Before You Start
+1. Fork the repository using GitHub's **Fork** button.
+2. In your fork, open **Actions**. If prompted, enable workflows.
+3. Select a workflow, choose **Run workflow**, enter the HTTPS SamFW download link, and select the extraction and upload options.
+4. Open the completed run. Download extracted files from the created release or use the GoFile link in its release notes.
 
-- Click the **Fork** button at the top right of this page and click fork to ur git account
-- Go to the **Actions** tab on your fork. If workflows are disabled, click **"I understand my workflows"**
+The available workflows are:
 
-Done. You only do this once.
+| Workflow | Result |
+| --- | --- |
+| **1. Images Extractor** | Selected raw partition images, compressed as `.xz`. |
+| **2. System Files Extractor** | Selected system file groups such as apps, libraries, configuration, and media. |
+| **3. Special Targeted Extractor** | Specific paths from system directories, using the defaults in `targets/system/` or workflow-provided overrides. |
+| **4. Full Firmware Fetcher** | The original downloaded firmware package. |
 
----
+### Select specific system paths
 
-## How to Get a Firmware Link
+The Special Targeted Extractor has an optional **Custom targets** field. Enter one or more category assignments separated by semicolons. Paths are relative to the category directory; comma-separate multiple paths within a category.
 
-Before using this tool, you need a direct download link from SamFW. Here's how:
+```text
+app=Settings,ImsSettings;priv-app=SamsungMembers;etc=permissions/privapp-permissions-com.samsung.android.app.xml;lib64=hw/vulkan.samsung.so
+```
 
-1. Go to [samfw.com](https://samfw.com) and search for your device, you can type the model number (e.g., `SM-S918B`) or the device name (e.g., `S23 Ultra`), then pick your region/CSC (e.g., `EUX`)
+Supported categories are `app`, `priv-app`, `etc`, `cameradata`, `media`, `lib`, `lib64`, and `framework`. For example, `etc=permissions/example.xml` selects `system/etc/permissions/example.xml`, while `app=ExampleApp` selects the `system/app/ExampleApp` directory. A category included in the field replaces that category's default list; categories left out continue to use their entries in `targets/system/`. Use `category=` to intentionally select no paths for a category.
 
-2. Choose the firmware version, then click the red button **"Download SamFW Server"**
+The field accepts relative paths made from letters, numbers, dots, underscores, plus signs, and hyphens. Absolute paths and `.` or `..` path segments are rejected.
 
-3. Wait a moment, a **"Download"** button will appear. Click it, then **cancel the download immediately**
+### Get a direct SamFW link
 
-4. Now right-click the same **"Download"** button again (or long-press if you're on Android) and select **"Copy link address"**
+1. Find the device model, region/CSC, and firmware version on [SamFW](https://samfw.com).
+2. Select **Download SamFW Server** and wait for the direct **Download** button.
+3. Copy the button's link address without starting the download.
+4. Paste the HTTPS link into the workflow's firmware URL field.
 
-That link is what you'll paste into the workflow.
+## Extraction details
 
----
+The image extractor supports `boot`, `dtbo`, `init_boot`, `odm`, `odm_dlkm`, `product`, `recovery`, `system`, `system_dlkm`, `system_ext`, `vbmeta`, `vbmeta_system`, `vendor`, `vendor_boot`, and `vendor_dlkm`. A/B image names such as `system_a` and `system_b` are preserved.
 
-## Two Ways to Use It
+System-file extraction can select apps, binaries, camera data, configuration, 32-bit and 64-bit libraries, media, privileged apps, Samsung AI Vision files, build properties, framework overlays, PIT files, and wallpaper resources. Availability depends on the firmware package and partition layout.
 
-| | **Images Extractor** | **System Files Extractor** |
-|---|---|---|
-| **Gets you** | Raw partition images | Files & folders from firmware |
-| **Use when** | Flash, inspect, or mod an image | Grab apps, configs, files from system |
+Workflows accept HTTPS download links and use normal TLS certificate validation. The output compression setting trades processing time for file size. Firmware extraction can take several minutes and use substantial runner storage.
 
-**Steps (same for both):**
-- Go to **Actions** → pick your workflow above
-- Paste your SamFW link
-- Pick compression 0~9 (0 = fast but big file, 9 = slow but small file)
-- Choose upload destination (GoFile or GitHub Releases)
-- Tick what you want (see below)
-- Hit **Run workflow**. Wait a few minutes. Download link appears.
+## Troubleshooting
 
----
+- **The workflow is missing:** Enable GitHub Actions in the fork and check that the workflow files are present on its default branch.
+- **The firmware download fails:** Confirm that the link is a direct HTTPS download link and has not expired.
+- **No selected files are found:** Check the firmware's partition layout and the paths. For targeted extraction, paths are relative to the category root, as in the examples above.
+- **Release upload fails or files are too large:** Choose GoFile as the destination. GitHub Releases have an individual asset size limit.
+- **A tool is missing:** Review the workflow log for the first failing command and include that section in an issue report.
 
-**Images Extractor** - which partitions can you grab?
+## License and redistribution
 
-`boot` `dtbo` `init_boot` `odm` `odm_dlkm` `product` `recovery` `system` `system_dlkm` `system_ext` `vbmeta` `vbmeta_system` `vendor` `vendor_boot` `vendor_dlkm`
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Review the license before use or redistribution. The repository's current distribution policy requires distribution through GitHub's fork mechanism; contact the copyright holder about commercial permissions.
 
----
+The repository bundles third-party utilities under their respective licenses. See [Tools used](#tools-used) and each upstream project for applicable notices and source terms.
 
-**System Files Extractor** - which files and folders can you pull?
+## Tools used
 
-| | What's inside |
-|---|---|
-| `app` | Preinstalled apps (APKs) |
-| `bin` | System binaries |
-| `cameradata` | Camera tuning files |
-| `etc` | Configs and permissions |
-| `lib` | 32-bit libraries |
-| `lib64` | 64-bit libraries |
-| `media` | Sounds, fonts, boot animation |
-| `priv-app` | Privileged system apps |
-| `saiv` | Samsung AI Vision stuff |
-| `config` | XML configs |
-| `super config` | Super image metadata (for repacking) |
-| `build.prop` | Device info and fingerprint |
-| `framework-res RRO` | Overlay APK from product partition |
-| `PIT file` | Partition table from CSC |
-| `wallpaper-res.apk` | Wallpaper APK from priv-app |
+- [nmeum/android-tools](https://github.com/nmeum/android-tools) (Apache-2.0): `simg2img`, `img2simg`, `ext2simg`, `append2simg`.
+- [LonelyFool/lpunpack_and_lpmake](https://github.com/LonelyFool/lpunpack_and_lpmake) (Apache-2.0): `lpunpack`, `lpdump`, `lpmake`.
+- [sekaiacg/erofs-utils](https://github.com/sekaiacg/erofs-utils): EROFS utilities.
+- [AOSP Verified Boot tools](https://android.googlesource.com/platform/external/avb) (Apache-2.0): `avbtool`.
+- [AOSP e2fsprogs](https://android.googlesource.com/platform/external/e2fsprogs) (Apache-2.0): `e2fsdroid`, `mke2fs.android`.
+- [AOSP f2fs-tools](https://android.googlesource.com/platform/external/f2fs-tools) (Apache-2.0): `make_f2fs`, `sload_f2fs`.
+- [AOSP mkbootimg](https://android.googlesource.com/platform/system/tools/mkbootimg): boot image utilities.
+- [AOSP libufdt](https://android.googlesource.com/platform/system/libufdt) (Apache-2.0): `mkdtboimg`.
+- [e2fsprogs](https://github.com/tytso/e2fsprogs): `debugfs`.
+- [XZ Utils](https://github.com/tukaani-project/xz): XZ compression.
+- [LZ4](https://github.com/lz4/lz4): LZ4 compression.
+- [GoFile API](https://gofile.io/api): optional upload destination.
 
-## What's Happening Behind the Scenes
-
-1. Downloads the firmware zip
-2. Unzips it, finds the AP tar (and CSC when extracting PIT)
-3. Checks for dynamic partitions and unpacks super.img if found
-4. Grabs exactly what you selected, nothing extra
-5. Packages everything as `.xz` or `.tar.xz`
-6. Uploads to **GitHub Releases** or **GoFile** and gives you a link
-
-Works on both legacy and modern Samsung devices. If the device uses A/B slots, partition names are kept untouched (`_a` and `_b`).
-
-## License
-
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) - personal and non-commercial use only.
-
-**Distribution Restriction:** Redistribution of this software, modified or unmodified, is ONLY permitted via GitHub's official fork mechanism from this repository. Direct copying, re-uploading, or creating standalone repositories of this code is prohibited.
-
-See the [LICENSE](LICENSE) file for the full terms.
-For commercial licensing inquiries, contact the repository owner via GitHub.
-
-## Tools Used
-
-This project relies on several open-source tools:
-
-- [nmeum/android-tools](https://github.com/nmeum/android-tools) (Apache-2.0) - simg2img, img2simg, ext2simg, append2simg
-- [LonelyFool/lpunpack_and_lpmake](https://github.com/LonelyFool/lpunpack_and_lpmake) (Apache-2.0) - lpunpack, lpdump, lpmake
-- [sekaiacg/erofs-utils](https://github.com/sekaiacg/erofs-utils) (GPL-2.0/Apache-2.0) - EROFS filesystem tools
-- [AOSP platform/external/avb](https://android.googlesource.com/platform/external/avb) (Apache-2.0) - avbtool
-- [AOSP platform/external/e2fsprogs](https://android.googlesource.com/platform/external/e2fsprogs) (Apache-2.0) - e2fsdroid, mke2fs.android
-- [AOSP platform/external/f2fs-tools](https://android.googlesource.com/platform/external/f2fs-tools) (Apache-2.0) - make_f2fs, sload_f2fs
-- [AOSP platform/system/tools/mkbootimg](https://android.googlesource.com/platform/system/tools/mkbootimg) (Apache-2.0) - mkbootimg, unpack_bootimg, repack_bootimg
-- [AOSP platform/system/libufdt](https://android.googlesource.com/platform/system/libufdt) (Apache-2.0) - mkdtboimg
-- [tytso/e2fsprogs](https://github.com/tytso/e2fsprogs) (GPL-2.0/LGPL-2.1) - debugfs
-- [tukaani/xz](https://github.com/tukaani-project/xz) (LGPL-2.1/GPL-2.0) - xz compression
-- [lz4](https://github.com/lz4/lz4) (BSD-2-Clause) - LZ4 compression
-
-Upload integration via [GoFile API](https://gofile.io/api).
+Check the bundled third-party components for their full license and attribution terms.
 
 ## Credits
 
-<div align="center">
+Samsung firmware is sourced through [SamFW](https://samfw.com). Thanks to project contributors [Ravindu Deshan](https://github.com/ravindu644), [DevCatowa](https://github.com/DevCat3), [QOS3](https://github.com/QOS3), and [MRX7014](https://github.com/mrx7014).
 
-<a href="https://samfw.com" target="_blank"><img src="https://img.shields.io/badge/🌐_SamFW-Firmware_Source-181717?style=for-the-badge&labelColor=1428A0" alt="SamFW"></a><br>
-<sub>The platform that makes firmware accessible to everyone. The backbone this project stands on.</sub>
-
----
-
-<table>
-<tr>
-<td colspan="3" align="center">
-<br>
-<a href="https://github.com/ravindu644" target="_blank">
-<img src="https://github.com/ravindu644.png" width="64" height="64" style="border-radius:50%"><br>
-<b>Ravindu Deshan</b>
-</a><br>
-<sub>Senior Developer - For regularly reviewing the entire repository structure, ensuring everything is solid, and bringing seasoned expertise that keeps this project on the right track.</sub>
-</td>
-</tr>
-<tr>
-<td align="center" width="200">
-<a href="https://github.com/DevCat3" target="_blank">
-<img src="https://github.com/DevCat3.png" width="64" height="64" style="border-radius:50%"><br>
-<b>DevCatowa</b>
-</a><br>
-<sub>For helping in writing scripts that shaped the soul of this repo. an inspiring catowa. </sub>
-</td>
-<td align="center" width="200">
-<a href="https://github.com/QOS3" target="_blank">
-<img src="https://github.com/QOS3.png" width="64" height="64" style="border-radius:50%"><br>
-<b>QOS3</b>
-</a><br>
-<sub>For being our كطري </sub>
-</td>
-<td align="center" width="200">
-<a href="https://github.com/mrx7014" target="_blank">
-<img src="https://github.com/mrx7014.png" width="64" height="64" style="border-radius:50%"><br>
-<b>MRX7014</b>
-</a><br>
-<sub>For the extraordinary commitment of being alive. Truly, it's enough we see you. </sub>
-</td>
-</tr>
-</table>
-
-</div>
-
----
-
-Copyright © 2026 Xiatsuma
+Copyright © 2026 Xiatsuma.

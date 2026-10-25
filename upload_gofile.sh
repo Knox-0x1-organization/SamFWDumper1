@@ -13,7 +13,7 @@ set -e
 
 FILE="$1"
 if [ ! -f "$FILE" ]; then
-  echo "❌ File not found: $FILE"
+  echo "[ERROR] File not found: $FILE"
   exit 1
 fi
 
@@ -23,7 +23,7 @@ TOKEN_RESPONSE=$(curl -s -X POST https://api.gofile.io/accounts)
 TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token' 2>/dev/null)
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-  echo "❌ Failed to get GoFile token"
+  echo "[ERROR] Failed to get GoFile token"
   exit 1
 fi
 
@@ -37,12 +37,12 @@ RESPONSE=$(curl -s -X POST \
 
 if echo "$RESPONSE" | grep -q '"status":"ok"'; then
   DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.data.downloadPage')
-  echo "✅ Upload successful!"
+  echo "[OK] Upload successful!"
   echo "$DOWNLOAD_URL"
   echo "$DOWNLOAD_URL" > download_url.txt
   exit 0
 else
-  echo "❌ Upload failed"
+  echo "[ERROR] Upload failed"
   echo "Response: $RESPONSE"
   exit 1
 fi

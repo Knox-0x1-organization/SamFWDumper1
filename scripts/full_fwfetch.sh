@@ -11,21 +11,26 @@
 # =============================================================================
 set -e
 
-echo "═══════════════════════════════════════"
+echo "---------------------------------------"
 echo "   Samsung Full Firmware Fetcher"
-echo "═══════════════════════════════════════"
+echo "---------------------------------------"
 
 URL="$1"
-[ -z "$URL" ] && { echo "❌ No URL provided"; exit 1; }
+[ -z "$URL" ] && { echo "[ERROR] No URL provided"; exit 1; }
+
+case "$URL" in
+  https://*) ;;
+  *) echo "[ERROR] Firmware URL must use HTTPS."; exit 1 ;;
+esac
 
 echo ""; echo "[1/2] Downloading..."
-wget -q --no-check-certificate --content-disposition "$URL"
+wget -q --content-disposition -- "$URL"
 
 ZIP_FILE=$(ls -t *.zip 2>/dev/null | head -1)
-[ ! -f "$ZIP_FILE" ] && { echo "❌ Download failed"; exit 1; }
+[ ! -f "$ZIP_FILE" ] && { echo "[ERROR] Download failed"; exit 1; }
 
 FILESIZE=$(stat -c%s "$ZIP_FILE")
-echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
+echo "[OK] Downloaded: $(numfmt --to=iec $FILESIZE)"
 
 CSC_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z]{3}$' | grep -v -E '^(COM|SAM|FAC)$' | head -1)
 AP_CODE=$(echo "$ZIP_FILE" | sed 's/\.zip$//' | tr '_' '\n' | grep -E '^[A-Z][A-Z0-9]{11,}$' | head -1)
@@ -35,4 +40,4 @@ echo "Firmware: $AP_CODE | CSC: $CSC_CODE"
 
 echo ""; echo "[2/2] Uploading..."
 bash upload_gofile.sh "$ZIP_FILE"
-echo "✅ Done"
+echo "[OK] Done"

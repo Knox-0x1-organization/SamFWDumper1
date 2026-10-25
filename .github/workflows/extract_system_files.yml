@@ -95,7 +95,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -115,23 +115,39 @@ jobs:
         run: chmod +x tools/android-tools/* tools/erofs-utils/* upload_gofile.sh scripts/extract_system_files.sh
 
       - name: Run System Files Extraction
+        env:
+          FIRMWARE_URL: ${{ inputs.url }}
+          COMPRESSION: ${{ inputs.compression }}
+          EXTRACT_APP: ${{ inputs.extract_app }}
+          EXTRACT_BIN: ${{ inputs.extract_bin }}
+          EXTRACT_CAMERADATA: ${{ inputs.extract_cameradata }}
+          EXTRACT_ETC: ${{ inputs.extract_etc }}
+          EXTRACT_LIB: ${{ inputs.extract_lib }}
+          EXTRACT_LIB64: ${{ inputs.extract_lib64 }}
+          EXTRACT_MEDIA: ${{ inputs.extract_media }}
+          EXTRACT_PRIV_APP: ${{ inputs.extract_priv_app }}
+          EXTRACT_SAIV: ${{ inputs.extract_saiv }}
+          EXTRACT_BUILD_PROP: ${{ inputs.extract_build_prop }}
+          EXTRACT_FRAMEWORK_RRO: ${{ inputs.extract_framework_rro }}
+          EXTRACT_PIT: ${{ inputs.extract_pit }}
+          EXTRACT_WALLPAPER_RES: ${{ inputs.extract_wallpaper_res }}
         run: |
           bash scripts/extract_system_files.sh \
-            "${{ github.event.inputs.url }}" \
-            "${{ github.event.inputs.compression }}" \
-            "${{ github.event.inputs.extract_app }}" \
-            "${{ github.event.inputs.extract_bin }}" \
-            "${{ github.event.inputs.extract_cameradata }}" \
-            "${{ github.event.inputs.extract_etc }}" \
-            "${{ github.event.inputs.extract_lib }}" \
-            "${{ github.event.inputs.extract_lib64 }}" \
-            "${{ github.event.inputs.extract_media }}" \
-            "${{ github.event.inputs.extract_priv_app }}" \
-            "${{ github.event.inputs.extract_saiv }}" \
-            "${{ github.event.inputs.extract_build_prop }}" \
-            "${{ github.event.inputs.extract_framework_rro }}" \
-            "${{ github.event.inputs.extract_pit }}" \
-            "${{ github.event.inputs.extract_wallpaper_res }}"
+            "$FIRMWARE_URL" \
+            "$COMPRESSION" \
+            "$EXTRACT_APP" \
+            "$EXTRACT_BIN" \
+            "$EXTRACT_CAMERADATA" \
+            "$EXTRACT_ETC" \
+            "$EXTRACT_LIB" \
+            "$EXTRACT_LIB64" \
+            "$EXTRACT_MEDIA" \
+            "$EXTRACT_PRIV_APP" \
+            "$EXTRACT_SAIV" \
+            "$EXTRACT_BUILD_PROP" \
+            "$EXTRACT_FRAMEWORK_RRO" \
+            "$EXTRACT_PIT" \
+            "$EXTRACT_WALLPAPER_RES"
 
       - name: Get Firmware Info
         id: fwinfo
@@ -154,12 +170,15 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
       - name: Upload to GoFile
-        if: ${{ github.event.inputs.upload_destination == 'gofile' }}
+        if: ${{ inputs.upload_destination == 'gofile' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
+          AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
+          CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
           if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "❌ No files to upload"
+            echo "[ERROR] No files to upload"
             exit 1
           fi
 
@@ -175,24 +194,27 @@ jobs:
               echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
               echo "${GOFILE_URL}" >> "$LINKS_FILE"
             else
-              echo "${BASENAME}: ❌ GoFile upload failed" >> "$NOTES_FILE"
+              echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
             fi
           done
 
-          gh release create "${{ steps.fwinfo.outputs.release_tag }}" \
-            --title "${{ steps.fwinfo.outputs.ap_code }} | ${{ steps.fwinfo.outputs.csc_code }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "$AP_CODE | $CSC_CODE" \
             --notes-file "$NOTES_FILE" \
             "$LINKS_FILE"
 
           rm -f "$NOTES_FILE"
 
       - name: Upload to GitHub Releases
-        if: ${{ github.event.inputs.upload_destination == 'github releases' }}
+        if: ${{ inputs.upload_destination == 'github releases' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
+          AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
+          CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
           if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "❌ No files to upload"
+            echo "[ERROR] No files to upload"
             exit 1
           fi
 
@@ -214,15 +236,15 @@ jobs:
                 GOFILE_URL=$(cat download_url.txt)
                 echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
               else
-                echo "${BASENAME}: ❌ GoFile upload failed" >> "$NOTES_FILE"
+                echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
               fi
             else
               ASSETS+=("$FILE")
             fi
           done
 
-          gh release create "${{ steps.fwinfo.outputs.release_tag }}" \
-            --title "${{ steps.fwinfo.outputs.ap_code }} | ${{ steps.fwinfo.outputs.csc_code }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "$AP_CODE | $CSC_CODE" \
             --notes-file "$NOTES_FILE" \
             "${ASSETS[@]}"
 

@@ -36,13 +36,17 @@ on:
         - 'gofile'
         - 'github releases'
       show_all:
-        description: 'Show ALL folders in app & priv-app'
+        description: 'Show app and priv-app paths and include configured matches in the output'
         type: boolean
         default: false
       output_name:
-        description: 'Output .zip name (default: Apps)'
+        description: 'Output package name (default: Apps)'
         required: false
         default: 'Apps'
+      custom_targets:
+        description: 'Overrides, e.g. app=Settings;etc=permissions/example.xml'
+        required: false
+        default: ''
 
 jobs:
   extract:
@@ -51,7 +55,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -71,12 +75,19 @@ jobs:
         run: chmod +x tools/android-tools/* tools/erofs-utils/* upload_gofile.sh scripts/extract_targeted.sh
 
       - name: Run Targeted Extraction
+        env:
+          FIRMWARE_URL: ${{ inputs.url }}
+          COMPRESSION: ${{ inputs.compression }}
+          SHOW_ALL: ${{ inputs.show_all }}
+          OUTPUT_NAME: ${{ inputs.output_name }}
+          CUSTOM_TARGETS: ${{ inputs.custom_targets }}
         run: |
           bash scripts/extract_targeted.sh \
-            "${{ github.event.inputs.url }}" \
-            "${{ github.event.inputs.compression }}" \
-            "${{ github.event.inputs.show_all }}" \
-            "${{ github.event.inputs.output_name }}"
+            "$FIRMWARE_URL" \
+            "$COMPRESSION" \
+            "$SHOW_ALL" \
+            "$OUTPUT_NAME" \
+            "$CUSTOM_TARGETS"
 
       - name: Get Firmware Info
         id: fwinfo
@@ -99,12 +110,15 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
       - name: Upload to GoFile
-        if: ${{ github.event.inputs.upload_destination == 'gofile' }}
+        if: ${{ inputs.upload_destination == 'gofile' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
+          AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
+          CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
           if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "❌ No files to upload"
+            echo "[ERROR] No files to upload"
             exit 1
           fi
 
@@ -120,24 +134,27 @@ jobs:
               echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
               echo "${GOFILE_URL}" >> "$LINKS_FILE"
             else
-              echo "${BASENAME}: ❌ GoFile upload failed" >> "$NOTES_FILE"
+              echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
             fi
           done
 
-          gh release create "${{ steps.fwinfo.outputs.release_tag }}" \
-            --title "${{ steps.fwinfo.outputs.ap_code }} | ${{ steps.fwinfo.outputs.csc_code }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "$AP_CODE | $CSC_CODE" \
             --notes-file "$NOTES_FILE" \
             "$LINKS_FILE"
 
           rm -f "$NOTES_FILE"
 
       - name: Upload to GitHub Releases
-        if: ${{ github.event.inputs.upload_destination == 'github releases' }}
+        if: ${{ inputs.upload_destination == 'github releases' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
+          AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
+          CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
           if [ ! -d "output" ] || [ -z "$(ls -A output)" ]; then
-            echo "❌ No files to upload"
+            echo "[ERROR] No files to upload"
             exit 1
           fi
 
@@ -159,15 +176,15 @@ jobs:
                 GOFILE_URL=$(cat download_url.txt)
                 echo "${BASENAME}: ${GOFILE_URL}" >> "$NOTES_FILE"
               else
-                echo "${BASENAME}: ❌ GoFile upload failed" >> "$NOTES_FILE"
+                echo "${BASENAME}: [ERROR] GoFile upload failed" >> "$NOTES_FILE"
               fi
             else
               ASSETS+=("$FILE")
             fi
           done
 
-          gh release create "${{ steps.fwinfo.outputs.release_tag }}" \
-            --title "${{ steps.fwinfo.outputs.ap_code }} | ${{ steps.fwinfo.outputs.csc_code }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "$AP_CODE | $CSC_CODE" \
             --notes-file "$NOTES_FILE" \
             "${ASSETS[@]}"
 

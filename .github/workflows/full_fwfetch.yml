@@ -25,13 +25,15 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
 
       - name: Download and Upload
-        run: bash scripts/full_fwfetch.sh "${{ github.event.inputs.url }}"
+        env:
+          FIRMWARE_URL: ${{ inputs.url }}
+        run: bash scripts/full_fwfetch.sh "$FIRMWARE_URL"
 
       - name: Get Firmware Info
         id: fwinfo
@@ -56,12 +58,15 @@ jobs:
       - name: Create Release with GoFile Link
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.fwinfo.outputs.release_tag }}
+          AP_CODE: ${{ steps.fwinfo.outputs.ap_code }}
+          CSC_CODE: ${{ steps.fwinfo.outputs.csc_code }}
         run: |
           GOFILE_URL=$(cat download_url.txt 2>/dev/null || echo "Upload failed")
           NOTES_FILE=$(mktemp)
           echo "${GOFILE_URL}" > "$NOTES_FILE"
-          gh release create "${{ steps.fwinfo.outputs.release_tag }}" \
-            --title "${{ steps.fwinfo.outputs.ap_code }} | ${{ steps.fwinfo.outputs.csc_code }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "$AP_CODE | $CSC_CODE" \
             --notes-file "$NOTES_FILE"
           rm -f "$NOTES_FILE"
           
