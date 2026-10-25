@@ -43,10 +43,9 @@ on:
         description: 'Output package name (default: Apps)'
         required: false
         default: 'Apps'
-      custom_targets:
-        description: 'Overrides, e.g. app=Settings;etc=permissions/example.xml'
-        required: false
-        default: ''
+      search_name:
+        description: 'Exact file or directory name to find anywhere in the system image'
+        required: true
 
 jobs:
   extract:
@@ -74,13 +73,15 @@ jobs:
             curl \
             android-sdk-libsparse-utils \
             e2fsprogs \
+            fuse2fs \
+            fuse3 \
             f2fs-tools \
             python3 \
             "linux-modules-extra-$(uname -r)"
 
       - name: Record installed package versions
         run: |
-          dpkg-query -W -f='${binary:Package}=${Version}\n' | grep -E '^(jq|xz-utils|lz4|unzip|curl|binutils|android-sdk-libsparse-utils|e2fsprogs|f2fs-tools|python3|linux-modules-extra|shellcheck)(:|[-=])' | sort
+          dpkg-query -W -f='${binary:Package}=${Version}\n' | grep -E '^(jq|xz-utils|lz4|unzip|curl|binutils|android-sdk-libsparse-utils|e2fsprogs|fuse2fs|fuse3|f2fs-tools|python3|linux-modules-extra|shellcheck)(:|[-=])' | sort
 
       - name: Make tools executable
         run: chmod +x tools/android-tools/* tools/erofs-utils/* upload_gofile.sh scripts/extract_targeted.sh
@@ -91,14 +92,14 @@ jobs:
           COMPRESSION: ${{ inputs.compression }}
           SHOW_ALL: ${{ inputs.show_all }}
           OUTPUT_NAME: ${{ inputs.output_name }}
-          CUSTOM_TARGETS: ${{ inputs.custom_targets }}
+          SEARCH_NAME: ${{ inputs.search_name }}
         run: |
           bash scripts/extract_targeted.sh \
             "$FIRMWARE_URL" \
             "$COMPRESSION" \
             "$SHOW_ALL" \
             "$OUTPUT_NAME" \
-            "$CUSTOM_TARGETS"
+            "$SEARCH_NAME"
 
       - name: Preserve extraction report
         if: always()

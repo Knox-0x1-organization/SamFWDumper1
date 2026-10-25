@@ -19,7 +19,7 @@ URL="$1"
 COMPRESSION_LEVEL="${2:-0}"
 SHOW_ALL="${3:-false}"
 OUTPUT_NAME="${4:-Apps}"
-CUSTOM_TARGETS="${5:-}"
+SEARCH_NAME="${5:-}"
 
 if [[ ! "$OUTPUT_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
   echo "[ERROR] Output name must be 1-64 letters, numbers, dots, underscores, or hyphens, and start with a letter or number."
@@ -45,68 +45,21 @@ LIB64_FILES=$(cat targets/system/lib64.txt 2>/dev/null | tr '\n' ' ')
 FRAMEWORK_JARS=$(cat targets/system/framework.txt 2>/dev/null | tr '\n' ' ')
 CAMERADATA_ITEMS=$(cat targets/system/cameradata.txt 2>/dev/null | tr '\n' ' ')
 
-apply_custom_targets() {
-  [ -z "$CUSTOM_TARGETS" ] && return 0
-  if [ "${#CUSTOM_TARGETS}" -gt 4096 ]; then
-    echo "[ERROR] Custom targets are too long (maximum 4096 characters)."
+validate_search_name() {
+  [ -z "$SEARCH_NAME" ] && return 0
+  if [[ ! "$SEARCH_NAME" =~ ^[A-Za-z0-9_+.-]{1,128}$ || "$SEARCH_NAME" == "." || "$SEARCH_NAME" == ".." ]]; then
+    echo "[ERROR] Enter one exact file or directory name (up to 128 letters, numbers, dots, underscores, plus signs, or hyphens)."
     return 1
   fi
-
-  local assignment category values item segment joined
-  local -a assignments target_items cleaned segments
-  IFS=';' read -r -a assignments <<< "$CUSTOM_TARGETS"
-  for assignment in "${assignments[@]}"; do
-    if [[ "$assignment" != *=* ]]; then
-      echo "[ERROR] Use category=path,path entries separated by semicolons."
-      return 1
-    fi
-    category="${assignment%%=*}"
-    values="${assignment#*=}"
-    case "$category" in
-      app|priv-app|etc|cameradata|media|lib|lib64|framework) ;;
-      *) echo "[ERROR] Unknown target category: $category"; return 1 ;;
-    esac
-
-    target_items=()
-    cleaned=()
-    if [ -n "$values" ]; then
-      IFS=',' read -r -a target_items <<< "$values"
-    fi
-    for item in "${target_items[@]}"; do
-      if [[ ! "$item" =~ ^[A-Za-z0-9_+.-]+(/[A-Za-z0-9_+.-]+)*$ ]]; then
-        echo "[ERROR] Invalid path in $category targets: $item"
-        echo "   Use relative paths with letters, numbers, dots, underscores, plus signs, or hyphens."
-        return 1
-      fi
-      IFS='/' read -r -a segments <<< "$item"
-      for segment in "${segments[@]}"; do
-        if [[ "$segment" == "." || "$segment" == ".." ]]; then
-          echo "[ERROR] Relative traversal is not allowed in target paths."
-          return 1
-        fi
-      done
-      cleaned+=("$item")
-    done
-    joined="${cleaned[*]}"
-    case "$category" in
-      app) APP_FOLDERS="$joined" ;;
-      priv-app) PRIVAPP_FOLDERS="$joined" ;;
-      etc) ETC_ITEMS="$joined" ;;
-      cameradata) CAMERADATA_ITEMS="$joined" ;;
-      media) MEDIA_FILES="$joined" ;;
-      lib) LIB_FILES="$joined" ;;
-      lib64) LIB64_FILES="$joined" ;;
-      framework) FRAMEWORK_JARS="$joined" ;;
-    esac
-  done
+  # Name search replaces the configured category list for this run.
+  APP_FOLDERS=""; PRIVAPP_FOLDERS=""; ETC_ITEMS=""; MEDIA_FILES=""
+  LIB_FILES=""; LIB64_FILES=""; FRAMEWORK_JARS=""; CAMERADATA_ITEMS=""
 }
 
-apply_custom_targets
+validate_search_name
 
 if [ "${SAMFWDUMPER_VALIDATE_TARGETS_ONLY:-false}" = "true" ]; then
-  printf 'app=%s\npriv-app=%s\netc=%s\ncameradata=%s\nmedia=%s\nlib=%s\nlib64=%s\nframework=%s\n' \
-    "$APP_FOLDERS" "$PRIVAPP_FOLDERS" "$ETC_ITEMS" "$CAMERADATA_ITEMS" \
-    "$MEDIA_FILES" "$LIB_FILES" "$LIB64_FILES" "$FRAMEWORK_JARS"
+  printf 'search_name=%s\n' "$SEARCH_NAME"
   exit 0
 fi
 
@@ -372,7 +325,55 @@ mkdir -p system_extracted
 
 echo "  System FS: $SYSTEM_FS"
 
-if [ "$SYSTEM_FS" = "f2fs" ]; then
+SEARCH_MATCHES_FILE="search_matches.nul"
+if [ -n "$SEARCH_NAME" ]; then
+  echo "  Searching system image recursively for: $SEARCH_NAME"
+  SEARCH_MOUNT="/tmp/system_search_$$"
+  mkdir -p "$SEARCH_MOUNT"
+  SEARCH_MOUNTED=false
+  case "$SYSTEM_FS" in
+    f2fs)
+      sudo modprobe f2fs 2>/dev/null || true
+      if sudo mount -t f2fs -o ro,loop "$SYSTEM_IMG" "$SEARCH_MOUNT" 2>/dev/null; then
+        SEARCH_MOUNTED=true
+      fi
+      ;;
+    erofs)
+      if tools/erofs-utils/fuse.erofs "$SYSTEM_IMG" "$SEARCH_MOUNT" 2>/dev/null; then
+        SEARCH_MOUNTED=true
+      fi
+      ;;
+    ext4|ext3|ext2)
+      if command -v fuse2fs >/dev/null 2>&1 && fuse2fs -o ro "$SYSTEM_IMG" "$SEARCH_MOUNT" 2>/dev/null; then
+        SEARCH_MOUNTED=true
+      fi
+      ;;
+  esac
+  if ! $SEARCH_MOUNTED; then
+    echo "[ERROR] Could not mount the $SYSTEM_FS system image for recursive search."
+    exit 1
+  fi
+  : > "$SEARCH_MATCHES_FILE"
+  while IFS= read -r -d '' MATCH; do
+    RELATIVE_PATH="${MATCH#"$SEARCH_MOUNT"/}"
+    mkdir -p "system_extracted/$(dirname "$RELATIVE_PATH")"
+    cp -a "$MATCH" "system_extracted/$RELATIVE_PATH"
+    printf '%s\0' "$RELATIVE_PATH" >> "$SEARCH_MATCHES_FILE"
+    echo "  [FOUND] /$RELATIVE_PATH"
+  done < <(find "$SEARCH_MOUNT" -mindepth 1 \( -type f -o -type d \) -name "$SEARCH_NAME" -print0)
+  case "$SYSTEM_FS" in
+    f2fs) sudo umount "$SEARCH_MOUNT" 2>/dev/null || true ;;
+    *) fusermount3 -u "$SEARCH_MOUNT" 2>/dev/null || fusermount -u "$SEARCH_MOUNT" 2>/dev/null || true ;;
+  esac
+  rmdir "$SEARCH_MOUNT" 2>/dev/null || true
+  if [ ! -s "$SEARCH_MATCHES_FILE" ]; then
+    echo "[ERROR] No file or directory named '$SEARCH_NAME' was found in system.img."
+    mkdir -p "output/$OUTPUT_NAME/system"
+    printf 'MISSING name:%s\n' "$SEARCH_NAME" > "output/$OUTPUT_NAME/system/EXTRACTION_REPORT.txt"
+    cp "output/$OUTPUT_NAME/system/EXTRACTION_REPORT.txt" output/extraction-report.txt
+    exit 1
+  fi
+elif [ "$SYSTEM_FS" = "f2fs" ]; then
   echo "  Mounting f2fs..."
   extract_f2fs_mount "$SYSTEM_IMG" "system_extracted" || true
 elif [ "$SYSTEM_FS" = "erofs" ]; then
@@ -559,7 +560,13 @@ copy_item() {
   return 1
 }
 
-if [ -n "$APP_FOLDERS" ]; then
+if [ -n "$SEARCH_NAME" ]; then
+  while IFS= read -r -d '' RELATIVE_PATH; do
+    if copy_item "system_extracted/$RELATIVE_PATH" "$SYS_OUT" "$RELATIVE_PATH" "/$RELATIVE_PATH"; then
+      HAS_ANY=true
+    fi
+  done < "$SEARCH_MATCHES_FILE"
+elif [ -n "$APP_FOLDERS" ]; then
   if [ "$SHOW_ALL" = "true" ]; then
     echo ""
     echo "--- system/app ---"

@@ -10,7 +10,7 @@ SamFWDumper processes Samsung firmware in GitHub Actions, extracts selected part
 
 The workflows use GitHub-hosted runners and the `GITHUB_TOKEN` to create releases. No personal access token is required. For GitHub Releases, files above the workflow's configured 2 GiB upload threshold are sent to GoFile and linked in the release notes.
 
-The targeted extractor also attaches a text report to its Actions run. It lists each requested path that was found or missing; the run fails after packaging if any requested target is missing, so incomplete output is not published as a successful release.
+The targeted extractor also attaches a text report to its Actions run. In name-search mode, it lists every matching file or directory and its image path; the run fails if the name is not found.
 
 For the targeted workflow, the runner reads the AP TAR from the SamFW ZIP using HTTP range requests and streams the selected partition image into extraction. It does not store the firmware ZIP on the runner or unpack unrelated firmware components.
 
@@ -27,20 +27,12 @@ The available workflows are:
 | --- | --- |
 | **1. Images Extractor** | Selected raw partition images, compressed as `.xz`. |
 | **2. System Files Extractor** | Selected system file groups such as apps, libraries, configuration, and media. |
-| **3. Special Targeted Extractor** | Specific paths from system directories, using the defaults in `targets/system/` or workflow-provided overrides. |
+| **3. Special Targeted Extractor** | Files or directories found by exact name anywhere in the system image. |
 | **4. Full Firmware Fetcher** | The original downloaded firmware package. |
 
-### Select specific system paths
+### Find a system file or directory by name
 
-The Special Targeted Extractor has an optional **Custom targets** field. Enter one or more category assignments separated by semicolons. Paths are relative to the category directory; comma-separate multiple paths within a category.
-
-```text
-app=Settings,ImsSettings;priv-app=SamsungMembers;etc=permissions/privapp-permissions-com.samsung.android.app.xml;lib64=hw/vulkan.samsung.so
-```
-
-Supported categories are `app`, `priv-app`, `etc`, `cameradata`, `media`, `lib`, `lib64`, and `framework`. For example, `etc=permissions/example.xml` selects `system/etc/permissions/example.xml`, while `app=ExampleApp` selects the `system/app/ExampleApp` directory. A category included in the field replaces that category's default list; categories left out continue to use their entries in `targets/system/`. Use `category=` to intentionally select no paths for a category.
-
-The field accepts relative paths made from letters, numbers, dots, underscores, plus signs, and hyphens. Absolute paths and `.` or `..` path segments are rejected.
+In **3. Special Targeted Extractor**, enter the exact basename in **Search name**. The workflow searches recursively across the system image, extracts every matching file or directory, and keeps each match's path under the output's `system/` folder. For example, entering `floating_feature` finds it even if its location differs between firmware builds. A matching directory is extracted with its contents. The run reports an error if there are no matches. Enter only the name, not a path; names may contain letters, numbers, dots, underscores, plus signs, and hyphens.
 
 ### Get a direct SamFW link
 
@@ -61,8 +53,7 @@ Workflows accept HTTPS download links and use normal TLS certificate validation.
 
 - **The workflow is missing:** Enable GitHub Actions in the fork and check that the workflow files are present on its default branch.
 - **The firmware download fails:** Confirm that the link is a direct HTTPS download link and has not expired.
-- **No selected files are found:** Check the firmware's partition layout and the paths. For targeted extraction, paths are relative to the category root, as in the examples above.
-- **A requested targeted path is missing:** Download the extraction report from the Actions run artifacts and check the listed path against the firmware's system image.
+- **A targeted search finds no matches:** Check the exact basename and firmware's system image. The run log and extraction report show the search result.
 - **Release upload fails or files are too large:** Choose GoFile as the destination. GitHub Releases have an individual asset size limit.
 - **A tool is missing:** Review the workflow log for the first failing command and include that section in an issue report.
 
