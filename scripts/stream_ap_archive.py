@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import email.message
 import re
+import shutil
 import struct
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -65,7 +67,7 @@ def download_name(url: str) -> str:
     return message.get_filename() or "firmware.zip"
 
 
-def stream_entry(url: str, info: zipfile.ZipInfo, total_size: int, out) -> None:
+def stream_entry(url: str, info: zipfile.ZipInfo, total_size: int):
     local_header = fetch_range(url, info.header_offset, info.header_offset + 29)
     fields = struct.unpack("<IHHHHHIIIHH", local_header)
     if fields[0] != 0x04034B50:
@@ -95,20 +97,69 @@ def stream_entry(url: str, info: zipfile.ZipInfo, total_size: int, out) -> None:
             remaining -= len(chunk)
             decoded = decompressor.decompress(chunk) if decompressor else chunk
             if decoded:
-                out.write(decoded)
                 output_size += len(decoded)
                 crc = zlib.crc32(decoded, crc)
+                yield decoded
         if decompressor:
             decoded = decompressor.flush()
             if decoded:
-                out.write(decoded)
                 output_size += len(decoded)
                 crc = zlib.crc32(decoded, crc)
+                yield decoded
             if not decompressor.eof:
                 raise RuntimeError("AP ZIP entry ended before the DEFLATE stream completed")
 
     if output_size != info.file_size or crc & 0xFFFFFFFF != info.CRC:
         raise RuntimeError("AP ZIP entry failed its size or CRC check")
+
+
+class EntryStream:
+    def __init__(self, chunks):
+        self.chunks = iter(chunks)
+        self.buffer = bytearray()
+        self.finished = False
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            for chunk in self.chunks:
+                self.buffer.extend(chunk)
+            self.finished = True
+            result = bytes(self.buffer)
+            self.buffer.clear()
+            return result
+        while len(self.buffer) < size and not self.finished:
+            try:
+                self.buffer.extend(next(self.chunks))
+            except StopIteration:
+                self.finished = True
+        result = bytes(self.buffer[:size])
+        del self.buffer[:size]
+        return result
+
+
+def extract_ap_images(url: str, info: zipfile.ZipInfo, total_size: int) -> list[str]:
+    image_names = []
+    reader = EntryStream(stream_entry(url, info, total_size))
+    with tarfile.open(fileobj=reader, mode="r|") as archive:
+        for member in archive:
+            if not member.isfile():
+                continue
+            name = member.name.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"(?:super|system)\.img(?:\.[A-Za-z0-9_-]+)?", name):
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                continue
+            with source, open(name, "wb") as destination:
+                shutil.copyfileobj(source, destination, length=CHUNK_SIZE)
+            image_names.append(name)
+            print(f"[OK] Extracted AP image {name}.", file=sys.stderr)
+
+    while reader.read(CHUNK_SIZE):
+        pass
+    if not image_names:
+        raise RuntimeError("The AP TAR does not contain super.img or system.img")
+    return image_names
 
 
 def main() -> int:
@@ -148,10 +199,11 @@ def main() -> int:
             with open("ap_code.txt", "w", encoding="utf-8") as output:
                 output.write(ap_code + "\n")
             print(
-                f"[OK] Streaming {ap_info.filename} ({ap_info.file_size} uncompressed bytes) from firmware ZIP.",
+                f"[OK] Reading {ap_info.filename} ({ap_info.file_size} uncompressed bytes) from firmware ZIP.",
                 file=sys.stderr,
             )
-            stream_entry(url, ap_info, size, sys.stdout.buffer)
+            image_names = extract_ap_images(url, ap_info, size)
+            print(f"[OK] Read {len(image_names)} required image(s) from the AP TAR.", file=sys.stderr)
     except (OSError, RuntimeError, zipfile.BadZipFile, zipfile.LargeZipFile, struct.error, zlib.error) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1

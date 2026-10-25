@@ -278,12 +278,11 @@ case "$URL" in
 esac
 
 echo ""; echo "[1/4] Reading the AP image archive from firmware..."
-if ! (set -o pipefail; python3 scripts/stream_ap_archive.py "$URL" \
-  | tar --no-same-owner --no-same-permissions --no-anchored --wildcards -xf - 'super.img*' 'system.img*'); then
+if ! python3 scripts/stream_ap_archive.py "$URL"; then
   echo "[ERROR] Failed to stream and extract the AP TAR."
   exit 1
 fi
-echo "[OK] Streamed the AP archive without storing the full firmware ZIP or AP TAR."
+echo "[OK] Read the required image entries without storing the full firmware ZIP or AP TAR."
 for file in super.img* system.img*; do
   [ -f "$file" ] && echo "  Found: $file"
 done

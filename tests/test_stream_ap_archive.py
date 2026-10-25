@@ -15,7 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 STREAMER = ROOT / "scripts" / "stream_ap_archive.py"
 
 
-def make_fixture() -> tuple[bytes, bytes]:
+def make_fixture() -> bytes:
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode="w") as archive:
         payload = b"super image fixture\n"
@@ -29,7 +29,7 @@ def make_fixture() -> tuple[bytes, bytes]:
         archive.writestr("BL_test.tar.md5", b"bootloader")
         archive.writestr("AP_A346MUBSGFZG4.tar.md5", ap_tar)
         archive.writestr("CSC_MXO.tar.md5", b"carrier")
-    return zip_buffer.getvalue(), ap_tar
+    return zip_buffer.getvalue()
 
 
 class RangeHandler(http.server.BaseHTTPRequestHandler):
@@ -67,7 +67,7 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    archive_bytes, expected_tar = make_fixture()
+    archive_bytes = make_fixture()
     RangeHandler.archive = archive_bytes
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RangeHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -84,8 +84,12 @@ def main() -> int:
             if result.returncode != 0:
                 sys.stderr.write(result.stderr.decode(errors="replace"))
                 return 1
-            if result.stdout != expected_tar:
-                raise AssertionError("Streamed AP TAR does not match the ZIP entry")
+            if result.stdout:
+                raise AssertionError("The AP streamer should write only required image files")
+            if pathlib.Path(directory, "super.img.lz4").read_bytes() != b"super image fixture\n":
+                raise AssertionError("The selected super image was not extracted correctly")
+            if pathlib.Path(directory, "boot.img.lz4").exists():
+                raise AssertionError("An unrelated AP image was extracted")
             if pathlib.Path(directory, "ap_code.txt").read_text().strip() != "A346MUBSGFZG4":
                 raise AssertionError("AP build code was not parsed from Content-Disposition")
             if pathlib.Path(directory, "csc_code.txt").read_text().strip() != "MXO":
